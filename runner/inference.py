@@ -50,6 +50,8 @@ from opendde.distributed.foldcp.metrics import (
     infer_n_token,
     measure_foldcp_stage,
 )
+
+from opendde.metrics.ipsae import IPSAECalculator
 from opendde.distributed.foldcp.mesh import (
     FoldCPProcessMesh,
     clear_foldcp_process_mesh_cache,
@@ -1656,6 +1658,7 @@ def _infer_predict_impl(
                 world_control_group=world_control_group,
             )
             t1_start = time.time()
+            ipsae_calculator = IPSAECalculator(pae_cutoff=10.0, dist_cutoff=10.0, pdockq_cutoff=8.0)
             sampler = getattr(dataloader, "sampler", None)
             if isinstance(sampler, InferenceJobSampler):
                 _run_rank_stage_synchronized(
@@ -1760,6 +1763,8 @@ def _infer_predict_impl(
                             f"N_token {n_token}, N_atom {n_atom}, N_msa {n_msa}"
                         )
                         prediction = runner.predict(data)
+                        ipsae_calculator.compute_update_confidence(atom_array, prediction, binder_chain="H",
+                                                                   target_chain="T")
                     except Exception as exc:
                         prediction_error = (
                             f"[Rank {_distributed_rank()}] model stage failed for "

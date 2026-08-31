@@ -1,0 +1,26 @@
+# minimal Conda environment for running snakemake-only Protenix on Google Batch Jobs.
+# you can NOT run any Protenix local run with this environment or debug.
+# This is ONLY for running Protenix with Snakemake on Google Batch.
+
+name: protenix_snakemake
+
+channels:
+  - conda-forge
+  - defaults
+  - bioconda
+
+dependencies:
+  # --- Core ---
+  - python=3.12
+  - pip
+  - pandas
+  - pyyaml
+  - gcsfs
+  - fsspec
+  - google-cloud-storage
+  - tqdm
+  - snakemake-storage-plugin-gcs
+  - snakemake==9.16.2
+  # --- Pip-installed packages ---
+  - pip:
+    - git+https://github.com/nicolasboisseau/snakemake-executor-plugin-googlebatch.git@edit_accelerator_parameters

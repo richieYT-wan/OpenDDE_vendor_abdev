@@ -1,0 +1,39 @@
+# Conda environment for running Protenix pipeline
+
+name: protenix
+
+channels:
+  - pyg
+  - conda-forge
+  - nvidia
+  - rosettacommons # For pyrosetta
+  - defaults
+  - bioconda
+
+dependencies:
+  # --- Core ---
+  - python=3.12
+  - pip
+  - pandas
+  - gcsfs
+  - fsspec
+  - google-cloud-storage
+  # --- Bioinformatics & Cheminformatics ---
+  - hmmer=3.4
+  - anarci=2024.05.21
+  - tmtools=0.3.0 # Used for TM score / RMSD and alignment and other utils
+  - tqdm
+  - snakemake-storage-plugin-gcs=1.1.4
+  - snakemake==9.16.2
+  # GCC compilers needed for Protenix build
+  - gcc_linux-64
+  - gxx_linux-64
+  # Pinned MMseqs version and skipping build from source
+  - mmseqs2==16.747c6
+
+  # --- Pip-installed packages ---
+  - pip:
+    - colabfold[alphafold]==1.6.2
+    - abnumber==0.4.4
+    - shape-complementarity
+    - git+https://github.com/nicolasboisseau/snakemake-executor-plugin-googlebatch.git@edit_accelerator_parameters

@@ -1,0 +1,15 @@
+import yaml
+import glob
+from snakemake.utils import min_version
+
+
+configfile: "config/base.yaml"
+
+min_version("8.0")
+
+wildcard_constraints:
+    experiment = r"[A-Za-z0-9_\-]+",
+    run_id     = r"[A-Za-z0-9_\-]+",
+    seed       = r"\d+",
+
+include: "rules/opendde_fold.smk"
