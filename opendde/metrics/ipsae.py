@@ -17,26 +17,25 @@ no CIF file parsing required, all computation in torch, GPU-friendly:
 from __future__ import annotations
 
 import math
-from typing import Dict, Tuple, Union, List, Any
 import re
+from typing import Dict, List, Tuple, Union
+
 import numpy as np
 import torch
 from biotite.structure import AtomArray, get_residue_starts
 
-
 NUC_RESIDUE_SET = {"DA", "DC", "DT", "DG", "A", "C", "U", "G"}
 
+
 def _match_chain_mask(chains_np: np.ndarray, chain_spec: str) -> np.ndarray:
-    """Match exact `chain_spec` or `<chain_spec><digits>` (e.g. T, T0, T1, ...)."""
     pattern = re.compile(rf"^{re.escape(chain_spec)}\d*$")
     return np.array([bool(pattern.match(str(c))) for c in chains_np], dtype=bool)
+
 
 def _as_tensor(x, dtype=None, device=None) -> torch.Tensor:
     """Cast numpy/tensor input to torch.Tensor (handles bfloat16 -> float32)."""
     if isinstance(x, torch.Tensor):
         t = x
-        # if t.dtype == torch.bfloat16:
-        #     t = t.to(torch.float32)
     else:
         t = torch.as_tensor(np.asarray(x))
     if dtype is not None:
@@ -63,9 +62,7 @@ class IPSAECalculator:
         self.dist_cutoff = dist_cutoff
         self.pdockq_cutoff = pdockq_cutoff
 
-    # ------------------------------------------------------------------ #
-    # d0 / pTM helpers (torch)
-    # ------------------------------------------------------------------ #
+    # d0 / pTM helpers
     @staticmethod
     def _calc_d0_scalar(L: Union[float, int], pair_type: str = "protein") -> float:
         """Scalar d0 — returned as a python float (no autograd needed)."""
@@ -74,16 +71,19 @@ class IPSAECalculator:
         if L > 27:
             d0 = 1.24 * (L - 15) ** (1.0 / 3.0) - 1.8
         else:
-            d0 = 1.0
+            d0 = min_value
         return max(min_value, d0)
 
     @staticmethod
     def _calc_d0_tensor(L: torch.Tensor, pair_type: str = "protein") -> torch.Tensor:
         """Vectorized d0 in torch."""
         L = L.to(torch.float32)
-        L = torch.clamp(L, min=26.0)
         min_value = 2.0 if pair_type == "nucleic_acid" else 1.0
-        d0 = 1.24 * (L - 15.0).pow(1.0 / 3.0) - 1.8
+        d0 = torch.where(
+            L > 27,
+            1.24 * torch.clamp(L - 15.0, min=1e-8).pow(1.0 / 3.0) - 1.8,
+            torch.full_like(L, min_value),
+        )
         return torch.clamp(d0, min=min_value)
 
     @staticmethod
@@ -103,14 +103,11 @@ class IPSAECalculator:
             chains:      (n_res,) object numpy array of chain ids (str)
         """
         res_starts = get_residue_starts(atom_array, add_exclusive_stop=True)
-        ca_atom_idx = []
-        chains_list = []
-
+        ca_atom_idx, chains_list = [], []
         for r in range(len(res_starts) - 1):
             i0, i1 = res_starts[r], res_starts[r + 1]
             atom_names = atom_array.atom_name[i0:i1]
             res_name = str(atom_array.res_name[i0])
-
             rep_local = None
             if res_name in NUC_RESIDUE_SET:
                 for k, name in enumerate(atom_names):
@@ -123,16 +120,11 @@ class IPSAECalculator:
                         rep_local = k
                         break
             if rep_local is None:
-                continue  # ligand / ion / unrecognized
-
+                continue
             ca_atom_idx.append(int(i0 + rep_local))
             chains_list.append(str(atom_array.chain_id[i0]))
-
         return np.array(ca_atom_idx, dtype=np.int64), np.array(chains_list)
 
-    # ------------------------------------------------------------------ #
-    # Main entry point
-    # ------------------------------------------------------------------ #
     @torch.no_grad()
     def _compute(
         self,
@@ -172,7 +164,6 @@ class IPSAECalculator:
             # Test: Pass everything to CPU due to CUDA memory constraints
             device = 'cpu'
             pae = pae.to(torch.float32).to(device)
-            # device = pae.device
             dtype = pae.dtype
 
             plddt = _as_tensor(plddt_vector, dtype=dtype, device=device)
@@ -190,8 +181,7 @@ class IPSAECalculator:
 
             # ----- per-residue CA table (numpy, then push to device) -----
             ca_idx_np, chains_np = self._residue_table(atom_array)
-            numres = len(ca_idx_np)
-            if numres == 0:
+            if len(ca_idx_np) == 0:
                 return self._empty_result()
 
             ca_atom_idx = torch.as_tensor(ca_idx_np, dtype=torch.long, device=device)
@@ -214,22 +204,20 @@ class IPSAECalculator:
             c1_indices = torch.as_tensor(np.where(c1_mask_np)[0], dtype=torch.long, device=device)
             c2_indices = torch.as_tensor(np.where(c2_mask_np)[0], dtype=torch.long, device=device)
 
-            # ----- pDockQ / pDockQ2 -----
+            # pDockQ / pDockQ2
             pdockq_t = torch.zeros((), dtype=dtype, device=device)
             pdockq2_t = torch.zeros((), dtype=dtype, device=device)
             mean_plddt_t = torch.zeros((), dtype=dtype, device=device)
 
-            contact_mask = distances <= self.pdockq_cutoff               # (numres, numres)
+            contact_mask = distances <= self.pdockq_cutoff
             interface_mask = contact_mask.index_select(0, c1_indices).index_select(1, c2_indices)
-            npairs_t = interface_mask.sum()
-            npairs = int(npairs_t.item())
+            npairs = int(interface_mask.sum().item())
 
             if npairs > 0:
-                c1_in_if = interface_mask.any(dim=1)                     # (|c1|,)
-                c2_in_if = interface_mask.any(dim=0)                     # (|c2|,)
+                c1_in_if = interface_mask.any(dim=1)
+                c2_in_if = interface_mask.any(dim=0)
                 c1_if_idx = c1_indices[c1_in_if]
                 c2_if_idx = c2_indices[c2_in_if]
-
                 interface_plddts = torch.cat([plddt_res[c1_if_idx], plddt_res[c2_if_idx]])
                 mean_plddt_t = interface_plddts.mean()
 
@@ -242,71 +230,68 @@ class IPSAECalculator:
                 x_q2 = mean_plddt_t * mean_ptm
                 pdockq2_t = 1.31 / (1.0 + torch.exp(-0.075 * (x_q2 - 84.733))) + 0.005
 
-            # ----- LIS -----
+            # LIS
             sub_pae = pae_res.index_select(0, c1_indices).index_select(1, c2_indices)
-            valid_pae = sub_pae[sub_pae <= 12.0]
-            if valid_pae.numel() > 0:
-                lis_t = ((12.0 - valid_pae) / 12.0).mean()
-            else:
-                lis_t = torch.zeros((), dtype=dtype, device=device)
+            valid_lis = sub_pae[sub_pae <= 12.0]
+            lis_t = ((12.0 - valid_lis) / 12.0).mean() if valid_lis.numel() > 0 \
+                else torch.zeros((), dtype=dtype, device=device)
 
-            # ----- ipSAE (directional, vectorized) -----
+            # Directional ipSAE + ipTM
             def calc_directional_scores(idxA: torch.Tensor, idxB: torch.Tensor):
                 sub_pae_ab = pae_res.index_select(0, idxA).index_select(1, idxB)  # (|A|, |B|)
-                valid_mask = sub_pae_ab < self.pae_cutoff                          # (|A|, |B|)
+                valid_mask = sub_pae_ab < self.pae_cutoff
+                valid_f = valid_mask.to(dtype)
+                counts = valid_f.sum(dim=1).clamp_min(1.0)
+                has_any = valid_mask.any(dim=1)
 
+                # ipTM: no PAE mask, d0 from full interchain length
                 n0chn = idxA.numel() + idxB.numel()
                 d0chn = self._calc_d0_scalar(n0chn)
+                ptm_chn_full = self._ptm_func(sub_pae_ab, d0chn)
+                row_mean_iptm = ptm_chn_full.mean(dim=1)
 
+                # ipSAE global (chn): same d0, masked by pae_cutoff
+                row_mean_chn = (ptm_chn_full * valid_f).sum(dim=1) / counts
+                row_mean_chn = torch.where(has_any, row_mean_chn, torch.zeros_like(row_mean_chn))
+
+                # ipSAE interface (dom): d0 from #residues participating in any valid pair
                 n0dom = int(valid_mask.any(dim=1).sum().item()) + int(valid_mask.any(dim=0).sum().item())
                 d0dom = self._calc_d0_scalar(n0dom)
-
-                n0res = valid_mask.sum(dim=1)                                      # (|A|,)
-                d0res = self._calc_d0_tensor(n0res)                                # (|A|,)
-
-                # Compute ptm matrices for the three d0 variants.
-                # chn / dom are scalar d0 → straightforward
-                ptm_chn = self._ptm_func(sub_pae_ab, d0chn)                        # (|A|, |B|)
-                ptm_dom = self._ptm_func(sub_pae_ab, d0dom)                        # (|A|, |B|)
-                # res has a per-row d0 → broadcast d0 over columns
-                ptm_res = 1.0 / (1.0 + (sub_pae_ab / d0res.unsqueeze(1)) ** 2.0)   # (|A|, |B|)
-
-                # Mean over valid columns per row.
-                # Use masked sum / count to keep it vectorized.
-                valid_f = valid_mask.to(dtype)
-                counts = valid_f.sum(dim=1).clamp_min(1.0)                         # (|A|,)
-                has_any = n0res > 0                                                # (|A|,)
-
-                row_mean_chn = (ptm_chn * valid_f).sum(dim=1) / counts
+                ptm_dom = self._ptm_func(sub_pae_ab, d0dom)
                 row_mean_dom = (ptm_dom * valid_f).sum(dim=1) / counts
-                row_mean_res = (ptm_res * valid_f).sum(dim=1) / counts
-
-                row_mean_chn = torch.where(has_any, row_mean_chn, torch.zeros_like(row_mean_chn))
                 row_mean_dom = torch.where(has_any, row_mean_dom, torch.zeros_like(row_mean_dom))
+
+                # ipSAE local (res): per-row d0 from row's valid-count
+                n0res = valid_mask.sum(dim=1)
+                d0res = self._calc_d0_tensor(n0res)
+                ptm_res = 1.0 / (1.0 + (sub_pae_ab / d0res.unsqueeze(1)) ** 2.0)
+                row_mean_res = (ptm_res * valid_f).sum(dim=1) / counts
                 row_mean_res = torch.where(has_any, row_mean_res, torch.zeros_like(row_mean_res))
 
+                zero = torch.zeros((), dtype=dtype, device=device)
                 return {
-                    "chn": row_mean_chn.max() if row_mean_chn.numel() else torch.zeros((), dtype=dtype, device=device),
-                    "dom": row_mean_dom.max() if row_mean_dom.numel() else torch.zeros((), dtype=dtype, device=device),
-                    "res": row_mean_res.max() if row_mean_res.numel() else torch.zeros((), dtype=dtype, device=device),
+                    "iptm": row_mean_iptm.max() if row_mean_iptm.numel() else zero,
+                    "chn":  row_mean_chn.max()  if row_mean_chn.numel()  else zero,
+                    "dom":  row_mean_dom.max()  if row_mean_dom.numel()  else zero,
+                    "res":  row_mean_res.max()  if row_mean_res.numel()  else zero,
                 }
 
             res_AB = calc_directional_scores(c1_indices, c2_indices)
             res_BA = calc_directional_scores(c2_indices, c1_indices)
 
-            def _mx(a, b): return torch.maximum(a, b)
-            def _mn(a, b): return torch.minimum(a, b)
+            _mx = torch.maximum
+            _mn = torch.minimum
 
             # ----- pack results (single GPU->CPU sync here) -----
             return {
-                "ipsae_local_max":      _mx(res_AB["res"], res_BA["res"]).item(),
-                "ipsae_global_max":     _mx(res_AB["chn"], res_BA["chn"]).item(),
-                "ipsae_interface_max":  _mx(res_AB["dom"], res_BA["dom"]).item(),
-                "iptm_global_max":      _mx(res_AB["chn"], res_BA["chn"]).item(),
-                "ipsae_local_min":      _mn(res_AB["res"], res_BA["res"]).item(),
-                "ipsae_global_min":     _mn(res_AB["chn"], res_BA["chn"]).item(),
-                "ipsae_interface_min":  _mn(res_AB["dom"], res_BA["dom"]).item(),
-                "iptm_global_min":      _mn(res_AB["chn"], res_BA["chn"]).item(),
+                "ipsae_local_max":      _mx(res_AB["res"],  res_BA["res"]).item(),
+                "ipsae_interface_max":  _mx(res_AB["dom"],  res_BA["dom"]).item(),
+                "ipsae_global_max":     _mx(res_AB["chn"],  res_BA["chn"]).item(),
+                "iptm_global_max":      _mx(res_AB["iptm"], res_BA["iptm"]).item(),
+                "ipsae_local_min":      _mn(res_AB["res"],  res_BA["res"]).item(),
+                "ipsae_interface_min":  _mn(res_AB["dom"],  res_BA["dom"]).item(),
+                "ipsae_global_min":     _mn(res_AB["chn"],  res_BA["chn"]).item(),
+                "iptm_global_min":      _mn(res_AB["iptm"], res_BA["iptm"]).item(),
                 "pdockq":               float(pdockq_t.item()),
                 "pdockq2":              float(pdockq2_t.item()),
                 "lis":                  float(lis_t.item()),
@@ -320,32 +305,29 @@ class IPSAECalculator:
 
     def compute_update_confidence(self, atom_array, pred_dict, binder_chain="H", target_chain="T") -> List[Dict]:
         """Computes ipSAE results and updates the sample confidence, one per sample."""
-
         for _pdict, conf in zip(pred_dict['full_data'], pred_dict['summary_confidence']):
             res = self._compute(atom_array, pae_matrix=_pdict['token_pair_pae'],
                                 plddt_vector=_pdict['atom_plddt'],
                                 atom_to_token_idx=_pdict['atom_to_token_idx'],
                                 pred_coordinates= _pdict['atom_coordinate'],
                                 binder_chain=binder_chain, target_chain=target_chain)
-            res['ipsae_error'] = False
             conf.update(res)
-
 
     @staticmethod
     def _empty_result() -> Dict[str, float]:
         return {
-            "ipsae_local_max": torch.nan,
-            "ipsae_global_max": torch.nan,
-            "ipsae_interface_max": torch.nan,
-            "iptm_global_max": torch.nan,
-            "ipsae_local_min": torch.nan,
-            "ipsae_global_min": torch.nan,
-            "ipsae_interface_min": torch.nan,
-            "iptm_global_min": torch.nan,
-            "pdockq": torch.nan,
-            "pdockq2": torch.nan,
-            "lis": torch.nan,
+            "ipsae_local_max": float("nan"),
+            "ipsae_interface_max": float("nan"),
+            "ipsae_global_max": float("nan"),
+            "iptm_global_max": float("nan"),
+            "ipsae_local_min": float("nan"),
+            "ipsae_interface_min": float("nan"),
+            "ipsae_global_min": float("nan"),
+            "iptm_global_min": float("nan"),
+            "pdockq": float("nan"),
+            "pdockq2": float("nan"),
+            "lis": float("nan"),
             "npairs_pdockq": 0,
-            "mean_plddt_interface": torch.nan,
-            "ipsae_error": True
+            "mean_plddt_interface": float("nan"),
+            "ipsae_error": True,
         }
