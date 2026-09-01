@@ -10,14 +10,13 @@ channels:
 dependencies:
   # --- Core ---
   - python=3.12
+  - matplotlib
   - pip
   - pandas
   - gcsfs
   - fsspec
   - google-cloud-storage
   # --- Bioinformatics & Cheminformatics ---
-  - hmmer=3.4
-  - anarci=2024.05.21
   - tmtools=0.3.0 # Used for TM score / RMSD and alignment and other utils
   - tqdm
   - snakemake-storage-plugin-gcs=1.1.4
@@ -25,9 +24,10 @@ dependencies:
   # GCC compilers needed for Protenix build
   - gcc_linux-64
   - gxx_linux-64
-  # Pinned MMseqs version and skipping build from source
+  # Template search & MSA utils; Pinned MMSeqs2 version and skipping build from source
   - mmseqs2==16.747c6
-  - matplotlib
+  - hmmer=3.4
+  - anarci=2024.05.21
 
   # --- Pip-installed packages ---
   - pip:

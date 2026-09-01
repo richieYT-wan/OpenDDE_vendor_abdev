@@ -36,20 +36,19 @@ done
 ENV_NAME="opendde"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
-export OPENDDE_ROOT_DIR="${REPO_DIR}/opendde_data/"
-mkdir -p $OPENDDE_ROOT_DIR
+export OPENDDE_ROOT_DIR="${REPO_DIR}"
 
 # FIXED: Anchor all runtime dirs to REPO_DIR (matches Protenix's $PWD-relative lookups).
 # Users running `python scripts/run.py ...` from the repo root will find files here.
-INSTALL_PREFIX="$HOME/protenix_bin"          # binaries can stay in $HOME (they're on PATH)
+INSTALL_PREFIX="$HOME/opendde_bin"          # binaries can stay in $HOME (they're on PATH)
 CHECKPOINT_DIR="${REPO_DIR}/checkpoint"
 COMMON_DIR="${REPO_DIR}/common"
 DB_DIR="${REPO_DIR}/search_database"
-GCS_BUCKET="gs://em52-ab-develop-analytics-prod-f684/data/denovo-design/snakemake/data/01_raw/protenix-inputs"
+GCS_BUCKET="gs://em52-ab-develop-analytics-prod-f684/data/denovo-design/snakemake/data/01_raw/opendde-inputs"
 MMSEQS_VERSION="16-747c6"
 MMSEQS_BIN_PATH="${INSTALL_PREFIX}/mmseqs2/bin/mmseqs"
 
-echo "=== Protenix Unified Installer (local) ==="
+echo "=== OpenDDE Unified Installer (local) ==="
 echo "  Repo Dir:        $REPO_DIR"
 echo "  Conda Env:       $ENV_NAME"
 echo "  Install Prefix:  $INSTALL_PREFIX"
@@ -148,46 +147,13 @@ conda env config vars set OPENDDE_ROOT_DIR="${REPO_DIR}"
 echo "Python version: $(python --version)"
 echo "Conda prefix: $CONDA_PREFIX"
 
-# --- Step 2: Install Protenix Package ---
+# --- Step 2: Install OpenDDE Package ---
+# Necessary due to addition of IPSAE in inference code
 echo "=== Step 2: Installing OpenDDE (non-editable) ==="
 uv pip install --torch-backend cu126 "opendde[gpu]"
 
-# --- Step 3: CUDA Toolkit ---
-echo "=== Step 3: Installing CUDA Toolkit (nvcc + headers) ==="
-if ! python -c "import torch" &>/dev/null; then
-    echo "ERROR: PyTorch not importable. Aborting."
-    exit 1
-fi
-
-CUDA_VERSION="$(python -c 'import torch; print(torch.version.cuda)')"
-echo "PyTorch was built against CUDA ${CUDA_VERSION}."
-
-pip uninstall -y cuda-toolkit 2>/dev/null || true
-
-echo "Installing NVIDIA CUDA Toolkit ${CUDA_VERSION}..."
-"$CONDA_CMD" install -y -n "$ENV_NAME" --strict-channel-priority \
-    -c "nvidia/label/cuda-${CUDA_VERSION}.0" -c conda-forge -c defaults \
-    cuda-toolkit cuda-cudart-dev cuda-nvcc cuda-cccl
-
-export CUDA_HOME="$CONDA_PREFIX"
-export PATH="$CUDA_HOME/bin:$PATH"
-export CPATH="$CONDA_PREFIX/targets/x86_64-linux/include:${CPATH:-}"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
-
-ACTIVATE_DIR="${CONDA_PREFIX}/etc/conda/activate.d"
-mkdir -p "$ACTIVATE_DIR"
-cat > "${ACTIVATE_DIR}/cuda_home.sh" <<'EOF'
-export CUDA_HOME="$CONDA_PREFIX"
-export PATH="$CUDA_HOME/bin:$PATH"
-export CPATH="$CONDA_PREFIX/targets/x86_64-linux/include:${CPATH:-}"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
-EOF
-
-echo "CUDA_HOME: $CUDA_HOME"
-nvcc --version | tail -1
-
-# --- Step 4: HMMER ---
-echo "=== Step 4: Verifying HMMER installation ==="
+# --- Step 3: HMMER ---
+echo "=== Step 3: Verifying HMMER installation ==="
 if command -v hmmsearch &>/dev/null; then
     echo "HMMER found at: $(command -v hmmsearch)"
 else
@@ -195,8 +161,8 @@ else
     echo "Manual install: conda install -c bioconda hmmer"
 fi
 
-# --- Step 5: MMseqs2 (from source, only if not already available) ---
-echo "=== Step 5: Ensuring MMseqs2 is available ==="
+# --- Step 4: MMseqs2 (from source, only if not already available) ---
+echo "=== Step 4: Ensuring MMseqs2 is available ==="
 
 if command -v mmseqs &>/dev/null; then
     echo "MMseqs2 already available at: $(command -v mmseqs)"
@@ -227,8 +193,8 @@ else
     mmseqs version
 fi
 
-# --- Step 6: Download Weights, Common, Databases ---
-echo "=== Step 6: Downloading model weights, common data, and search databases ==="
+# --- Step 5: Download Weights, Common, Databases ---
+echo "=== Step 5: Downloading model weights, common data, and search databases ==="
 
 echo ">>> Model checkpoints -> ${CHECKPOINT_DIR}"
 gcs_sync "${GCS_BUCKET}/checkpoint/" "${CHECKPOINT_DIR}"
@@ -245,10 +211,9 @@ ls -1R "$DB_DIR"
 # --- Verify critical files ---
 echo ">>> Verifying critical files"
 REQUIRED=(
-  "$CHECKPOINT_DIR/protenix-v2.pt"
+  "$CHECKPOINT_DIR/opendde_abag.pt"
   "$COMMON_DIR/components.cif"
   "$COMMON_DIR/components.cif.rdkit_mol.pkl"
-  "$COMMON_DIR/clusters-by-entity-40.txt"
   "$DB_DIR/pdb_seqres_2022_09_28.fasta"
 )
 missing=0
@@ -284,12 +249,12 @@ fi
 
 # --- Finalization ---
 echo ""
-echo "=== Running smoke test: protenix pred --help ==="
-protenix pred --help | head
+echo "=== Running smoke test: opendde pred --help ==="
+opendde pred --help | head
 
 echo ""
 echo "=========================================="
-echo "Protenix setup complete!"
+echo "OpenDDE setup complete!"
 echo "=========================================="
 echo ""
 echo "To activate the environment:"
@@ -300,7 +265,6 @@ echo "  - Checkpoint:      $CHECKPOINT_DIR"     # FIXED: was $WEIGHTS_DIR
 echo "  - Common data:     $COMMON_DIR"
 echo "  - Search DB:       $DB_DIR"
 echo "  - MMseqs2 Binary:  $(command -v mmseqs)"
-echo "  - CUDA_HOME:       $CUDA_HOME"
 echo ""
 echo "IMPORTANT: The runtime data (checkpoint/common/search_database) lives"
 echo "in the repo directory ($REPO_DIR). Always run 'python scripts/run.py ...'"
