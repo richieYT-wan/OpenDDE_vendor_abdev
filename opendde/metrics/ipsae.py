@@ -320,29 +320,32 @@ class IPSAECalculator:
 
     def compute_update_confidence(self, atom_array, pred_dict, binder_chain="H", target_chain="T") -> List[Dict]:
         """Computes ipSAE results and updates the sample confidence, one per sample."""
+
         for _pdict, conf in zip(pred_dict['full_data'], pred_dict['summary_confidence']):
             res = self._compute(atom_array, pae_matrix=_pdict['token_pair_pae'],
                                 plddt_vector=_pdict['atom_plddt'],
                                 atom_to_token_idx=_pdict['atom_to_token_idx'],
                                 pred_coordinates= _pdict['atom_coordinate'],
                                 binder_chain=binder_chain, target_chain=target_chain)
+            res['ipsae_error'] = False
             conf.update(res)
 
 
     @staticmethod
     def _empty_result() -> Dict[str, float]:
         return {
-            "ipsae_local_max": 0.0,
-            "ipsae_global_max": 0.0,
-            "ipsae_interface_max": 0.0,
-            "iptm_global_max": 0.0,
-            "ipsae_local_min": 0.0,
-            "ipsae_global_min": 0.0,
-            "ipsae_interface_min": 0.0,
-            "iptm_global_min": 0.0,
-            "pdockq": 0.0,
-            "pdockq2": 0.0,
-            "lis": 0.0,
+            "ipsae_local_max": torch.nan,
+            "ipsae_global_max": torch.nan,
+            "ipsae_interface_max": torch.nan,
+            "iptm_global_max": torch.nan,
+            "ipsae_local_min": torch.nan,
+            "ipsae_global_min": torch.nan,
+            "ipsae_interface_min": torch.nan,
+            "iptm_global_min": torch.nan,
+            "pdockq": torch.nan,
+            "pdockq2": torch.nan,
+            "lis": torch.nan,
             "npairs_pdockq": 0,
-            "mean_plddt_interface": 0.0,
+            "mean_plddt_interface": torch.nan,
+            "ipsae_error": True
         }
