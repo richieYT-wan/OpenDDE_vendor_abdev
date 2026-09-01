@@ -1,5 +1,5 @@
 """
-Generates Protenix-compatible JSONs from a CSV of VH sequences against a fixed target.
+Generates OpenDDE-compatible JSONs from a CSV of VH sequences against a fixed target.
 Target MSA is computed once. VHH MSAs are built from a local SAbDAb nanobody database.
 Local database is built from ~/scripts/setup_vhh_db.sh
 
@@ -51,14 +51,14 @@ def parse_args():
     parser.add_argument('--seqres_db', type=str, default=None,
                         help='Path to the sequence database FASTA for template search '
                              '(e.g. /root/search_database/pdb_seqres_2022_09_28.fasta). '
-                             'If not provided, Protenix will attempt to download it.')
+                             'If not provided, OpenDDE will attempt to download it.')
     parser.add_argument('--hmmsearch_binary', type=str, default=None,
                         help='Path to hmmsearch binary (searches PATH if not provided).')
     parser.add_argument('--hmmbuild_binary', type=str, default=None,
                         help='Path to hmmbuild binary (searches PATH if not provided).')
-    parser.add_argument('--msa_server_mode', type=str, default='protenix',
-                        choices=['protenix', 'colabfold'],
-                        help='MSA server mode (default: protenix)')
+    parser.add_argument('--msa_server_mode', type=str, default='opendde',
+                        choices=['opendde', 'colabfold'],
+                        help='MSA server mode (default: opendde)')
     # ============================================
     parser.add_argument('--skip_vhh_msa', action='store_true',
                         help='Skip VHH MSA building (fallback to dummy)')
@@ -82,10 +82,8 @@ def process_target_msa_template(
         output_dir: Path,
         seqres_db: Optional[str] = None,
         hmmsearch_binary: Optional[str] = None,
-        hmmbuild_binary: Optional[str] = None,
-        msa_server_mode: str = 'protenix',
-) -> Dict:
-    """Run protenix mt on the target to get its MSA + templates. Runs once."""
+        hmmbuild_binary: Optional[str] = None) -> Dict:
+    """Run `opendde mt` on the target to get its MSA + templates. Runs once."""
     protein_chains = []
     if isinstance(target, list):
         for i, t in enumerate(target):
@@ -102,10 +100,9 @@ def process_target_msa_template(
 
     try:
         cmd = [
-            "protenix", "mt",
+            "opendde", "mt",
             "-i", str(tmp_path),
             "-o", str(output_dir),
-            "-m", msa_server_mode,
         ]
         # === NEW: pass explicit template search paths if provided ===
         if seqres_db is not None:
@@ -121,7 +118,7 @@ def process_target_msa_template(
     except subprocess.CalledProcessError:
         if target_intermediate_dir.exists():
             logger.warning(
-                f"protenix mt failed; removing partial output at {target_intermediate_dir}"
+                f"opendde mt failed; removing partial output at {target_intermediate_dir}"
             )
             shutil.rmtree(target_intermediate_dir)
         raise
@@ -292,7 +289,7 @@ def main():
         if not seqres_path.exists():
             logger.warning(
                 f"--seqres_db path does not exist: {seqres_path}. "
-                f"Protenix will attempt to download it."
+                f"OpenDDE will attempt to download it."
             )
             seqres_db = None
         else:

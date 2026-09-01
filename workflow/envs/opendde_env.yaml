@@ -1,12 +1,9 @@
-# Conda environment for running Protenix pipeline
+# Conda environment for running OpenDDE pipeline ; Basically same as Protenix
 
-name: protenix
+name: opendde
 
 channels:
-  - pyg
   - conda-forge
-  - nvidia
-  - rosettacommons # For pyrosetta
   - defaults
   - bioconda
 
@@ -30,10 +27,10 @@ dependencies:
   - gxx_linux-64
   # Pinned MMseqs version and skipping build from source
   - mmseqs2==16.747c6
+  - matplotlib
 
   # --- Pip-installed packages ---
   - pip:
-    - colabfold[alphafold]==1.6.2
     - abnumber==0.4.4
     - shape-complementarity
     - git+https://github.com/nicolasboisseau/snakemake-executor-plugin-googlebatch.git@edit_accelerator_parameters

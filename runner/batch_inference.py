@@ -380,7 +380,7 @@ def get_default_runner(
     deterministic: bool = False,
     use_template: bool = False,
     use_rna_msa: bool = False,
-    need_atom_confidence: bool = True,
+    need_atom_confidence: bool = False, # Set this to False to not log full_data to every run. Saves ~10x disk space. 
     kalign_binary_path: Optional[str] = None,
     use_tfg_guidance: bool = False,
     foldcp_mode: Literal["single", "distributed"] = "single",
