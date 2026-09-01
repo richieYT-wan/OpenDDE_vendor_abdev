@@ -14,7 +14,7 @@ inference_configs: dict[str, Any] = {
     # Empty = "unset"; resolved at run time to CLI > JSON modelSeeds > random seed.
     "seeds": ListValue([], dtype=int),
     "dump_dir": "./output",
-    "need_atom_confidence": True,
+    "need_atom_confidence": False,
     "sorted_by_ranking_score": True,
     "device": "auto",
     "input_json_path": RequiredValue(str),
